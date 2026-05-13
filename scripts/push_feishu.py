@@ -75,15 +75,22 @@ def parse_report(report_path: Path) -> dict:
         # New game: "HH:MM upload | Game Name — hook" or "2026-05-12 | Game Name — hook"
         # Known game update: "Game Name — new video"
         new_game_match = re.match(r".*\|\s*(.+?)\s*—\s*(.+)", header)
-        if not new_game_match:
-            continue
-
-        game_name = new_game_match.group(1).strip()
-        hook = new_game_match.group(2).strip()
+        if new_game_match:
+            game_name = new_game_match.group(1).strip()
+            hook = new_game_match.group(2).strip()
+            is_update = False
+        else:
+            update_match = re.match(r"(.+?)\s*—\s*new video", header)
+            if not update_match:
+                continue
+            game_name = update_match.group(1).strip()
+            hook = "update"
+            is_update = True
 
         game = {
             "name": game_name,
             "hook": hook,
+            "is_update": is_update,
             "videos": [],
             "status": "",
             "developer": "",
@@ -142,7 +149,10 @@ def build_7day_summary(seen_games_path: Path, report_date: date, channels_path: 
 
     recent = []
     for name, info in games.items():
-        first = datetime.strptime(info["first_seen"], "%Y-%m-%d").date()
+        first_str = info.get("first_seen", "")
+        if not first_str:
+            continue
+        first = datetime.strptime(first_str, "%Y-%m-%d").date()
         if first >= cutoff:
             recent.append({
                 "name": name,
@@ -170,7 +180,7 @@ def build_feishu_content(report_date: date, parsed: dict, summary: dict) -> dict
     if parsed["is_quiet"]:
         s = summary
         content_lines.append([
-            {"tag": "text", "text": f"Game Scout | {today}\nQuiet Day — 24h 内无新增视频（≥10 分钟）\n\n"},
+            {"tag": "text", "text": f"游戏竞品监控 | {today}\nQuiet Day — 24h 内无新增视频（≥10 分钟）\n\n"},
         ])
         content_lines.append([
             {"tag": "text", "text": f"📊 过去 7 天汇总 ({s['period']})\n"},
@@ -202,13 +212,22 @@ def build_feishu_content(report_date: date, parsed: dict, summary: dict) -> dict
 
     # Normal day
     games = parsed["games"]
+    new_count = sum(1 for g in games if not g.get("is_update"))
+    update_count = sum(1 for g in games if g.get("is_update"))
+    parts = []
+    if new_count:
+        parts.append(f"{new_count} 款新游戏")
+    if update_count:
+        parts.append(f"{update_count} 款更新")
+    header_text = "、".join(parts)
     content_lines.append([
-        {"tag": "text", "text": f"Game Scout | {today}\n发现 {len(games)} 款新游戏\n\n"},
+        {"tag": "text", "text": f"游戏竞品监控 | {today}\n发现 {header_text}\n\n"},
     ])
 
     for game in games:
+        prefix = "↻" if game.get("is_update") else "▶"
         content_lines.append([
-            {"tag": "text", "text": f"▶ {game['name']}"},
+            {"tag": "text", "text": f"{prefix} {game['name']}"},
         ])
         meta_parts = []
         if game.get("status"):
@@ -245,7 +264,7 @@ def build_feishu_content(report_date: date, parsed: dict, summary: dict) -> dict
 
     return {
         "zh_cn": {
-            "title": f"Game Scout | {len(games)} 款新游戏",
+            "title": f"Game Scout | {header_text}",
             "content": content_lines,
         }
     }
@@ -295,7 +314,8 @@ def push_report(post_content: dict, dry_run: bool = False):
 def main():
     parser = argparse.ArgumentParser(description="Push Game Scout report to Feishu")
     parser.add_argument("--date", required=True, help="Report date (YYYY-MM-DD)")
-    parser.add_argument("--dir", default="~/game-scan-youtube", help="Working directory")    parser.add_argument("--dry-run", action="store_true", help="Print message without sending")
+    parser.add_argument("--dir", default="~/studio/_shared/game-scan-youtube", help="Working directory")
+    parser.add_argument("--dry-run", action="store_true", help="Print message without sending")
     parser.add_argument("--env", default="~/.game-scan-youtube/.env", help="Path to .env file")
     args = parser.parse_args()
 
