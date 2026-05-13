@@ -33,7 +33,8 @@ On first run, create a working directory (default: `~/game-scan-youtube/`) and i
       "title_pattern": "Game Name: Genre Gameplay Mobile Android",
       "weight": 10,
       "tags": ["genre-tag-1", "genre-tag-2"],
-      "note": "why this channel is valuable"
+      "note": "why this channel is valuable",
+      "slg_videos_7d": 0
     }
   ],
   "discovered_channels": []
@@ -45,7 +46,16 @@ On first run, create a working directory (default: `~/game-scan-youtube/`) and i
 ```json
 {
   "last_updated": "YYYY-MM-DD",
-  "games": {}
+  "games": {
+    "Game Name": {
+      "first_seen": "YYYY-MM-DD",
+      "last_seen": "YYYY-MM-DD",
+      "seen_videos": ["youtube-url-1"],
+      "developer": "...",
+      "status": "CBT|Soft Launch|Launched|Early Access",
+      "tags": ["..."]
+    }
+  }
 }
 ```
 
@@ -55,14 +65,25 @@ Both are read at start, written at end. They persist across sessions.
 
 ```
 1. Read channels.json + seen_games.json
-2. Scan high-weight channels for uploads in last 24h
-3. Extract new game names from video titles
-4. Cross-reference: search each new game to find more videos/channels
-5. Filter: only include games/videos NOT in seen_games.json
-6. For games already seen: only include NEW video URLs not in seen_games
-7. Generate report (newest upload first)
-8. Update seen_games.json and channels.json
-9. Push to IM via bundled script
+2. Batch scan: sort channels by weight desc, process 5 per batch
+   - Read channel /videos page via mcp__web_reader__webReader (m.youtube.com)
+   - Extract videos uploaded in last 24h, filter by title pattern
+   - Check duration ≥ 10 min, skip shorter
+   - On 429/empty: skip channel (no health penalty)
+   - Pause between batches
+3. For each new game found:
+   - YouTube cross-ref: search for coverage on other channels
+   - Google Play cross-ref: extract downloads, rating, last update
+   - Channel discovery: evaluate new channels for discovered_channels
+4. Dedup: filter out games/videos already in seen_games.json
+   - New game → full entry with all details
+   - Known game → only include video URLs not in seen_videos
+5. Generate markdown report (newest upload first)
+6. Update state:
+   - seen_games.json: add new games, append new video URLs, update last_seen
+   - channels.json: update slg_videos_7d per channel, adjust weights per health rules
+7. Push to IM:
+   python3 scripts/push_feishu.py --date YYYY-MM-DD --dir ~/game-scan-youtube
 ```
 
 ## Dedup Rules
@@ -73,30 +94,54 @@ Both are read at start, written at end. They persist across sessions.
 
 ## Scan Strategy (24h window)
 
-Only look for videos uploaded **today or yesterday**. For each high-weight channel, search their recent content using queries like:
+Only look for videos uploaded **today or yesterday**.
 
-```
-"@channel-handle" gameplay mobile android today
-site:youtube.com "gameplay mobile android" "strategy" today OR yesterday
-"new strategy game" mobile gameplay uploaded today
-```
+### Primary: Direct channel page read
 
-Extract game names from titles using the channel's known title pattern.
+Use `mcp__web_reader__webReader` to read channel video pages directly:
+
+1. **Primary URL:** `https://m.youtube.com/@channel-handle/videos` (lightweight, bypasses cookie wall)
+2. **Fallback URL:** `https://www.youtube.com/@channel-handle/videos?pbj=1`
+3. Extract videos uploaded in the last 24h from page content
+4. Filter by channel's known title pattern to extract game names
+5. Check each video page for duration ≥ 10 min — skip shorter ones
+
+### Batch processing + rate limiting
+
+- Sort channels by weight descending, process in batches of 5
+- Seed channels (weight 9-10) always in first batch
+- Pause between batches to avoid 429 errors
+- If a channel page returns empty or 429: mark it as skipped, retry next run
+- Update `slg_videos_7d` for each channel after scanning
+
+### Fallback: WebSearch
+
+Only use WebSearch when a channel page cannot be read:
+```
+"@channel-handle" gameplay mobile android today OR yesterday
+```
 
 ### Cross-reference for new games
 
-When a new game name appears, search it:
+When a new game name appears, do two lookups:
+
+**YouTube cross-ref** — find other channels covering it:
 ```
 "[game name]" gameplay mobile android site:youtube.com
 ```
-This finds other channels covering it — both for cross-reference signal AND for channel discovery.
+
+**Google Play signal** — extract store metrics:
+```
+"[game name]" site:play.google.com
+```
+Extract: download count, rating, last update date. A sudden spike in downloads = scaling test signal.
 
 ### Channel discovery
 
-If a search reveals a new channel covering multiple games in your genre:
+If a cross-ref search reveals a new channel covering multiple games in your genre:
 1. Check if it's already in channels.json
 2. If not, evaluate: how many relevant videos does it have? Consistent title pattern?
-3. Add to `discovered_channels` with appropriate initial weight
+3. Add to `discovered_channels` with `slg_videos_7d: 0` and appropriate initial weight
 
 ## Weight System
 
@@ -110,8 +155,14 @@ If a search reveals a new channel covering multiple games in your genre:
 
 Weight adjustments per run:
 - Channel has ≥1 new relevant video this run → weight +1 (max 8)
-- Channel has 0 relevant content for 3 consecutive runs → weight -1 (min 1)
 - User explicitly approves a channel → promote to seed, weight 10
+
+Channel health (based on `slg_videos_7d`, updated each run):
+- `slg_videos_7d` ≥ 5 → healthy, maintain weight
+- `slg_videos_7d` 1-4 → watching
+- `slg_videos_7d` = 0 AND weight > 5 → demote -1 (min 1), flag for user review
+
+**Important:** channels skipped by batch processing (429/empty) do NOT update `slg_videos_7d` and do NOT participate in health calculations. Only channels whose pages were actually read get updated.
 
 ## Output Format
 
@@ -130,6 +181,7 @@ Save to `~/game-scan-youtube/YYYY-MM-DD.md`.
 **Platform:** Android / iOS / Both
 **What you'll see:** [2-3 sentences gameplay description]
 **Download:** Google Play / App Store URL (if available)
+**Store signal:** X downloads · ★Y.Z · updated MM-DD
 **Cross-ref:** X channels covered this today
 
 ---
@@ -146,12 +198,12 @@ Save to `~/game-scan-youtube/YYYY-MM-DD.md`.
 [New channels discovered, weight changes]
 
 ## Quiet Day
-[If nothing new found — include 7-day summary instead of leaving empty]
+[If nothing new found — say so. Don't pad the report.]
 ```
 
 ### Empty day handling
 
-If no new videos found in 24h, write a Quiet Day report with a **7-day summary**. The quiet day push becomes a weekly retrospective — keeping the daily push valuable even when there's nothing new.
+If no new videos found in 24h, write a Quiet Day report with a **7-day summary** section. The quiet day push becomes an opportunity to deliver a weekly retrospective — keeping the daily push valuable even when there's nothing new.
 
 ```markdown
 # Game Scan — YYYY-MM-DD（24h Update）
@@ -205,19 +257,43 @@ Adapt the include/exclude criteria to your target genre. For SLG/4X strategy gam
 
 ## IM Push
 
-Use the bundled `scripts/push_feishu.py` to send the report to Feishu/Lark. Before first use, the user must configure their credentials in the script. Run it after generating the report:
+The push script auto-reads the day's report + `seen_games.json` to build the Feishu message. No manual data entry needed.
 
 ```bash
-python3 scripts/push_feishu.py
+# Normal push
+python3 scripts/push_feishu.py --date YYYY-MM-DD --dir ~/game-scan-youtube
+
+# Dry run (print to stdout, don't send)
+python3 scripts/push_feishu.py --date YYYY-MM-DD --dir ~/game-scan-youtube --dry-run
 ```
 
-The script sends a rich text post with game name, tags, size, status, developer, gameplay description, download link, and video links sorted newest first.
+Credentials are read from environment variables, not hardcoded:
+- `FEISHU_APP_ID`
+- `FEISHU_APP_SECRET`
+- `FEISHU_USER_OPEN_ID`
+
+Store them in `~/.game-scan-youtube/.env` for auto-loading:
+```
+FEISHU_APP_ID=your_app_id
+FEISHU_APP_SECRET=your_app_secret
+FEISHU_USER_OPEN_ID=your_open_id
+```
+
+## Daily Scheduling
+
+Use CronCreate to auto-run daily:
+
+- Time: 11:03 local time (off-minute to avoid load spikes)
+- Prompt: run the game-scan-youtube skill
+- CronCreate: `"3 11 * * *"`
 
 ## Key Principles
 
 - **Incremental only**: never show previously seen content. seen_games.json is the truth.
 - **24h window**: focus on what's new RIGHT NOW, not what was new last week.
-- **Channel-first**: weighted channels are the primary discovery vector.
+- **Channel-first, page-read**: read channel /videos pages directly for data, WebSearch only as fallback.
+- **Batch with pacing**: 5 channels per batch, respect rate limits, skipped channels don't affect health.
+- **Automated push**: script auto-reads files and pushes, `--dry-run` for testing.
 - **Cross-reference**: same game on 2+ channels in same day = hot signal.
 - **Honest**: quiet day = quiet day. Don't pad.
 - **Concise**: each entry 5-8 lines + video links. This is a daily digest, not a research report.
