@@ -6,6 +6,8 @@ Get them from: https://open.feishu.cn/app → your app → Credentials & Basic I
 
 import json
 import sys
+from datetime import date
+
 import requests
 
 # ====== CONFIGURE THESE ======
@@ -36,7 +38,7 @@ def get_token() -> str:
 
 def push_report():
     content_lines = []
-    today = __import__("datetime").date.today().isoformat()
+    today = date.today().isoformat()
 
     if QUIET_DAY:
         content_lines.append([
