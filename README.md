@@ -1,16 +1,17 @@
 # Game Scan YouTube
 
-Daily YouTube monitor for new mobile game gameplay videos. Scans weighted channels every 24 hours, deduplicates against a persistent game library, and pushes a structured report to Feishu/Lark.
+Daily YouTube monitor for new mobile game gameplay videos. Scans weighted channels via RSS feeds every 24 hours, deduplicates against a persistent game library, and pushes a structured report to Feishu/Lark.
 
 ## What it does
 
-- **Channel scanning** — Monitors a weighted list of YouTube channels for new gameplay uploads in your target genre
-- **Batch processing** — Reads channel pages directly (5 per batch), respects rate limits, skips on 429 errors
+- **RSS-first scanning** — Fetches YouTube RSS feeds (`/feeds/videos.xml?channel_id=...`) for structured video data with precise timestamps, zero rate limiting
+- **Batch processing** — Sorts channels by weight, processes 5 per batch, skips on errors with no health penalty
 - **Deduplication** — Tracks all seen games and videos in JSON files, never reports the same content twice
 - **Cross-reference** — When a new game appears, searches YouTube and Google Play for coverage metrics
 - **Channel discovery** — Automatically finds and evaluates new channels during each scan
-- **Channel health** — Tracks `slg_videos_7d` per channel, auto-promotes/demotes based on activity
+- **Channel health** — Tracks `relevant_videos_7d` per channel, auto-promotes/demotes based on activity
 - **IM push** — Sends a rich text report to Feishu/Lark with game info, gameplay description, download links, and video links
+- **Update tracking** — Distinguishes new game discoveries (▶) from new videos for known games (↻)
 - **Quiet day fallback** — When no new videos are found, delivers a 7-day retrospective summary instead
 
 ## Setup
@@ -49,18 +50,21 @@ Create a working directory with two JSON files:
   "seed_channels": [
     {
       "id": "@channel-handle",
+      "channel_id": "UCxxxxxxxxxxxxxxxxxxxxxx",
       "name": "Channel Name",
       "url": "https://www.youtube.com/@channel-handle",
       "title_pattern": "Game Name Gameplay Mobile Android",
       "weight": 10,
       "tags": ["strategy", "SLG"],
       "note": "why this channel matters",
-      "slg_videos_7d": 0
+      "relevant_videos_7d": 0
     }
   ],
   "discovered_channels": []
 }
 ```
+
+Find `channel_id` via: `curl -s "https://m.youtube.com/@handle" | grep -oP 'channel_id=UC[^"&]+'`
 
 **seen_games.json** — Start empty:
 
@@ -79,10 +83,10 @@ Tell Claude: "run game-scan-youtube" or "check for new game videos" — the skil
 
 ```bash
 # Normal push
-python3 scripts/push_feishu.py --date YYYY-MM-DD --dir ~/game-scan-youtube
+python3 scripts/push_feishu.py --date YYYY-MM-DD --dir ~/studio/_shared/game-scan-youtube
 
 # Dry run (print to stdout, don't send)
-python3 scripts/push_feishu.py --date YYYY-MM-DD --dir ~/game-scan-youtube --dry-run
+python3 scripts/push_feishu.py --date YYYY-MM-DD --dir ~/studio/_shared/game-scan-youtube --dry-run
 ```
 
 The script auto-reads the day's markdown report and `seen_games.json` — no manual data entry needed.
@@ -97,12 +101,12 @@ The script auto-reads the day's markdown report and `seen_games.json` — no man
 | 3-4 | Occasional content | Light scan |
 | 1-2 | Needs validation | Skip |
 
-Channel health (based on `slg_videos_7d`, updated each run):
-- `slg_videos_7d` ≥ 5 → healthy, maintain weight
-- `slg_videos_7d` 1-4 → watching
-- `slg_videos_7d` = 0 AND weight > 5 → demote -1 (min 1), flag for user review
+Channel health (based on `relevant_videos_7d`, updated each run):
+- `relevant_videos_7d` ≥ 5 → healthy, maintain weight
+- `relevant_videos_7d` 1-4 → watching
+- `relevant_videos_7d` = 0 AND weight > 5 → demote -1 (min 1), flag for user review
 
-Channels skipped due to rate limiting (429) do NOT affect health calculations.
+Channels skipped due to errors do NOT affect health calculations.
 
 ## Report format
 
@@ -114,6 +118,8 @@ Each game entry includes:
 - Store signal (downloads, rating, last update)
 - Video links sorted by upload date, newest first
 - Cross-reference count (how many channels covered it)
+
+Known game updates are shown with ↻ prefix, new discoveries with ▶.
 
 Quiet days include a 7-day retrospective with hot games table and trend themes.
 
