@@ -13,7 +13,7 @@ import sys
 import argparse
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Optional
 
 import requests
 
@@ -64,13 +64,16 @@ def parse_report(report_path: Path) -> dict:
         result["is_quiet"] = True
         return result
 
+    # Match new game sections: ### HH:MM upload | Game Name — hook
     game_blocks = re.split(r"\n### ", text)
-    for block in game_blocks[1:]:
+    for block in game_blocks[1:]:  # skip content before first ###
         lines = block.strip().splitlines()
         if not lines:
             continue
 
         header = lines[0]
+        # New game: "HH:MM upload | Game Name — hook" or "2026-05-12 | Game Name — hook"
+        # Known game update: "Game Name — new video"
         new_game_match = re.match(r".*\|\s*(.+?)\s*—\s*(.+)", header)
         if not new_game_match:
             continue
@@ -92,6 +95,7 @@ def parse_report(report_path: Path) -> dict:
         }
 
         for line in lines[1:]:
+            # Video links: - [Title](url) — meta
             video_match = re.match(r"-\s+\[(.+?)\]\((https?://[^\s)]+)\)\s*—\s*(.+)", line)
             if video_match:
                 game["videos"].append({
@@ -101,6 +105,7 @@ def parse_report(report_path: Path) -> dict:
                 })
                 continue
 
+            # Metadata lines: **Key:** Value
             meta_match = re.match(r"\*\*(.+?):\*\*\s*(.+)", line)
             if meta_match:
                 key = meta_match.group(1).lower().replace(" ", "_")
@@ -124,11 +129,16 @@ def parse_report(report_path: Path) -> dict:
     return result
 
 
-def build_7day_summary(seen_games_path: Path, report_date: date) -> dict:
+def build_7day_summary(seen_games_path: Path, report_date: date, channels_path: Optional[Path] = None) -> dict:
     """Build 7-day summary from seen_games.json."""
     data = json.loads(seen_games_path.read_text())
     games = data.get("games", {})
     cutoff = report_date - timedelta(days=7)
+
+    total_channels = 0
+    if channels_path and channels_path.exists():
+        ch = json.loads(channels_path.read_text())
+        total_channels = len(ch.get("seed_channels", [])) + len(ch.get("discovered_channels", []))
 
     recent = []
     for name, info in games.items():
@@ -147,7 +157,7 @@ def build_7day_summary(seen_games_path: Path, report_date: date) -> dict:
     return {
         "period": f"{cutoff.isoformat()[5:]} ~ {report_date.isoformat()[5:]}",
         "total_games": len(recent),
-        "total_channels": 0,
+        "total_channels": total_channels,
         "hot_games": recent,
     }
 
@@ -163,7 +173,7 @@ def build_feishu_content(report_date: date, parsed: dict, summary: dict) -> dict
             {"tag": "text", "text": f"Game Scout | {today}\nQuiet Day — 24h 内无新增视频（≥10 分钟）\n\n"},
         ])
         content_lines.append([
-            {"tag": "text", "text": f"过去 7 天汇总 ({s['period']})\n"},
+            {"tag": "text", "text": f"📊 过去 7 天汇总 ({s['period']})\n"},
         ])
         content_lines.append([
             {"tag": "text", "text": f"  {s['total_games']} 款新游戏 · {sum(g['videos'] for g in s['hot_games'])} 条视频 · {s['total_channels']} 个频道监控"},
@@ -171,7 +181,7 @@ def build_feishu_content(report_date: date, parsed: dict, summary: dict) -> dict
 
         if s["hot_games"]:
             content_lines.append([
-                {"tag": "text", "text": "\n高信号游戏（视频覆盖数）："},
+                {"tag": "text", "text": "\n🔥 高信号游戏（视频覆盖数）："},
             ])
             for g in s["hot_games"][:9]:
                 signal = "🔴" if g["videos"] >= 3 else "🟡"
@@ -247,13 +257,15 @@ def push_report(post_content: dict, dry_run: bool = False):
         title = post_content["zh_cn"]["title"]
         print(f"[DRY RUN] Title: {title}")
         for line_group in post_content["zh_cn"]["content"]:
+            line_text = ""
             for item in line_group:
-                text = item.get("text", "")
+                t = item.get("text", "")
                 href = item.get("href", "")
                 if href:
-                    print(f"  {text}[{item.get('text', 'link')}]({href})")
+                    line_text += f"{t}({href})"
                 else:
-                    print(text, end="")
+                    line_text += t
+            print(line_text)
         print()
         return
 
@@ -283,8 +295,7 @@ def push_report(post_content: dict, dry_run: bool = False):
 def main():
     parser = argparse.ArgumentParser(description="Push Game Scout report to Feishu")
     parser.add_argument("--date", required=True, help="Report date (YYYY-MM-DD)")
-    parser.add_argument("--dir", default="~/game-scan-youtube", help="Working directory")
-    parser.add_argument("--dry-run", action="store_true", help="Print message without sending")
+    parser.add_argument("--dir", default="~/game-scan-youtube", help="Working directory")    parser.add_argument("--dry-run", action="store_true", help="Print message without sending")
     parser.add_argument("--env", default="~/.game-scan-youtube/.env", help="Path to .env file")
     args = parser.parse_args()
 
@@ -305,7 +316,8 @@ def main():
         sys.exit(1)
 
     parsed = parse_report(report_path)
-    summary = build_7day_summary(seen_games_path, report_date)
+    channels_path = work_dir / "channels.json"
+    summary = build_7day_summary(seen_games_path, report_date, channels_path)
     post_content = build_feishu_content(report_date, parsed, summary)
     push_report(post_content, dry_run=args.dry_run)
 

@@ -7,7 +7,7 @@ description: >
   Feishu/Lark IM push via a bundled script. Adaptable to any game genre (SLG, RPG,
   survival, etc.) by changing the filter criteria and seed channels.
   Use this skill whenever the user mentions game scouting, competitive intelligence,
-  mobile game monitoring, new game discovery, gameplay video tracking, SLG竞品,
+  mobile game monitoring, new game discovery, gameplay video tracking,
   竞品监控, or wants to build a daily scan-and-push pipeline for mobile game videos.
   Also use for "搜一下新游戏", daily game check, or any game market landscape query.
 ---
