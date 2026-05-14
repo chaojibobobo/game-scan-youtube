@@ -1,0 +1,11 @@
+# Runtime data
+*.md
+!README.md
+!SKILL.md
+
+# State files
+channels.json
+seen_games.json
+
+# OMC state
+.omc/

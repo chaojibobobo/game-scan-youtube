@@ -77,7 +77,51 @@ Find `channel_id` via: `curl -s "https://m.youtube.com/@handle" | grep -oP 'chan
 
 ### 4. Run
 
-Tell Claude: "run game-scan-youtube" or "check for new game videos" — the skill triggers automatically on relevant prompts.
+**Interactive** — Tell Claude: "run game-scan-youtube" or "check for new game videos" — the skill triggers automatically on relevant prompts.
+
+**Automated** — Use `run_scan.sh` for non-interactive execution (system cron, CI/CD, etc.):
+
+```bash
+# Basic (today's date)
+./scripts/run_scan.sh
+
+# Specify date
+./scripts/run_scan.sh --date 2026-05-14
+
+# Dry run (skip Feishu push)
+./scripts/run_scan.sh --dry-run
+
+# Custom work directory and budget cap
+./scripts/run_scan.sh --dir ~/my-scout --budget 0.5
+```
+
+Flags: `--date`, `--dir`, `--env`, `--budget` (default 1.0 USD), `--dry-run`
+
+### Scheduling
+
+**macOS crontab:**
+```cron
+3 11 * * * /path/to/game-scan-youtube/scripts/run_scan.sh >> /tmp/game-scan.log 2>&1
+```
+
+**GitHub Actions** (`.github/workflows/game-scan.yml`):
+```yaml
+name: Game Scan
+on:
+  schedule:
+    - cron: '3 3 * * *'  # 11:03 CST
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anthropics/claude-code-action@v1
+      - run: ./scripts/run_scan.sh
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_USER_OPEN_ID: ${{ secrets.FEISHU_USER_OPEN_ID }}
+```
 
 ## Push script
 
