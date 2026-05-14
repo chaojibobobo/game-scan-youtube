@@ -251,9 +251,14 @@ def build_feishu_content(report_date: date, parsed: dict, summary: dict) -> dict
                 {"tag": "text", "text": f"  Store: {game['store_signal']}"},
             ])
         if game.get("download_url"):
+            # Extract URL from possible markdown [text](url) format
+            url = game["download_url"]
+            md_link = re.match(r"\[.*?\]\((https?://[^\s)]+)\)", url)
+            if md_link:
+                url = md_link.group(1)
             content_lines.append([
                 {"tag": "text", "text": "  📦 "},
-                {"tag": "a", "text": "Google Play", "href": game["download_url"]},
+                {"tag": "a", "text": "Google Play", "href": url},
             ])
         for v in game.get("videos", []):
             content_lines.append([
