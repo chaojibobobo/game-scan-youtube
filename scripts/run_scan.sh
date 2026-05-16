@@ -38,9 +38,9 @@ else
 fi
 
 # Build prompt
-PROMPT="Run the game-scan-youtube skill for date $DATE. Scan all channels via RSS, dedup against seen_games.json, generate the daily report, update state files, then push to Feishu."
+PROMPT="Run the game-scan-youtube skill for date $DATE. If the daily report for $DATE already exists and is non-empty, do not rerun or push again unless explicitly asked. Otherwise, process all scan-eligible channels via RSS, then run the expansion search queries from SKILL.md to catch new YouTube gameplay videos beyond the known channel list. Dedup against seen_games.json, generate the daily report, update state files, discover/add useful new channels, then push to Feishu."
 if [[ -n "$DRY_RUN" ]]; then
-  PROMPT="Run the game-scan-youtube skill for date $DATE. Scan all channels via RSS, dedup against seen_games.json, generate the daily report, update state files. Do NOT push to Feishu — skip the python push script."
+  PROMPT="Run the game-scan-youtube skill for date $DATE. If the daily report for $DATE already exists and is non-empty, do not rerun unless explicitly asked. Otherwise, process all scan-eligible channels via RSS, then run the expansion search queries from SKILL.md to catch new YouTube gameplay videos beyond the known channel list. Dedup against seen_games.json, generate the daily report, update state files, and discover/add useful new channels. Do NOT push to Feishu — skip the python push script."
 fi
 
 # Run claude in non-interactive mode

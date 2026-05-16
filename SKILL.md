@@ -70,24 +70,28 @@ Both are read at start, written at end. They persist across sessions.
 
 ```
 1. Read channels.json + seen_games.json
-2. Batch scan: sort channels by weight desc, process 5 per batch
+2. Broad daily scan: sort channels by weight desc, process all scan-eligible channels
    - Fetch RSS feed via curl: youtube.com/feeds/videos.xml?channel_id={channel_id}
    - Parse XML, filter entries with <published> in last 24h
-   - Apply genre keyword filter to title + description
-   - Duration check: read video page for candidates, skip < 10 min
+   - Apply a broad mobile-game candidate filter before the stricter genre ranking
+   - Duration check: read video page for candidates, prefer >= 10 min but keep high-signal 6-10 min first-look videos
    - On RSS error/empty: skip channel (no health penalty)
-3. For each new game found:
+3. Expand discovery beyond existing channels:
+   - Run targeted YouTube searches for fresh mobile gameplay queries
+   - Search recent Google Play / App Store launch and early-access signals
+   - Use cross-ref results to find new relevant channels
+4. For each new game found:
    - YouTube cross-ref (WebSearch): find coverage on other channels
    - Google Play cross-ref: extract downloads, rating, last update
    - Channel discovery: evaluate new channels for discovered_channels
-4. Dedup: filter out games/videos already in seen_games.json
+5. Dedup: filter out games/videos already in seen_games.json
    - New game → full entry with all details
    - Known game → only include video URLs not in seen_videos
-5. Generate markdown report (newest upload first)
-6. Update state:
+6. Generate markdown report (newest upload first)
+7. Update state:
    - seen_games.json: add new games, append new video URLs, update last_seen
    - channels.json: update relevant_videos_7d per channel, adjust weights per health rules
-7. Push to Feishu:
+8. Push to Feishu:
    python3 scripts/push_feishu.py --date YYYY-MM-DD --dir ~/studio/_shared/game-scan-youtube
 ```
 
@@ -103,7 +107,11 @@ Both are read at start, written at end. They persist across sessions.
 
 ## Scan Strategy (24h window)
 
-Only look for videos uploaded **today or yesterday**.
+Only look for videos uploaded **today or yesterday** for the daily report. Use a 7-day window only for channel health, cross-reference strength, and quiet-day summaries.
+
+Daily coverage goal: maximize useful recall first, then rank by relevance. Missing a new mobile strategy game is worse than listing a borderline candidate with a clear note.
+
+Before doing network work, check whether `~/studio/_shared/game-scan-youtube/YYYY-MM-DD.md` already exists and is non-empty for the requested date. If it exists and the user did not explicitly ask to rerun, do not push again; summarize that the daily report already exists.
 
 ### Primary: YouTube RSS feeds
 
@@ -123,11 +131,44 @@ Each RSS feed returns the latest 15 videos as XML with:
 **Filter pipeline:**
 1. Parse XML, extract all `<entry>` elements
 2. Keep only entries with `<published>` within last 24h
-3. Filter by genre keywords in title/description (strategy, survival, base-building, RTS, 4X, etc.)
-4. Exclude known irrelevant genres (RPG, racing, sports, puzzle, dress-up, etc.)
-5. For remaining videos, check duration via video page read — skip < 10 min
+3. Keep broad mobile-game candidates first: Android, iOS, mobile, gameplay, walkthrough, first look, new game, early access, CBT, soft launch, global launch, Google Play, App Store
+4. Rank higher when title/description includes strategy, SLG, 4X, RTS, survival, base-building, alliance, PvP, war, kingdom, empire, zombie, post-apocalyptic, tower defense, city builder, civilization, troops, heroes + base/map language
+5. Exclude only obvious non-target content: PC/console-only, shorts, trailers without gameplay, racing, sports, dress-up, match-3, pure idle, pure anime RPG/gacha with no strategy/base layer
+6. For remaining videos, check duration via video page read. Prefer >= 10 min. Keep 6-10 min videos if the title says first look/new game/CBT/soft launch or the game has strong store/cross-channel signal.
 
 **Adding a new channel:** When a new channel is added to channels.json, find its `channel_id` by reading `https://m.youtube.com/@handle` and extracting the UC... ID from page source (`grep -oP 'channel_id=UC[^"&]+'`).
+
+### Expansion Search: recent YouTube discovery
+
+After RSS scanning, run targeted WebSearch queries to catch games from channels not yet in `channels.json`. Use date terms for today/yesterday when useful.
+
+Minimum daily query set:
+```
+site:youtube.com/watch mobile strategy game gameplay android
+site:youtube.com/watch new mobile game gameplay android
+site:youtube.com/watch SLG gameplay android
+site:youtube.com/watch 4X strategy mobile gameplay
+site:youtube.com/watch base building survival strategy android gameplay
+site:youtube.com/watch soft launch mobile strategy gameplay
+site:youtube.com/watch CBT mobile strategy gameplay
+```
+
+For each credible result:
+- Extract video URL, channel, upload date, and game name.
+- Dedup against `seen_games.json`.
+- If the channel repeatedly appears with target-genre coverage, resolve its `channel_id` and add it to `discovered_channels`.
+- Do not let search expansion replace RSS. RSS is the stable backbone; search expansion is the recall booster.
+
+### Store Expansion: launch signals
+
+For candidate games and quiet days, search store signals:
+```
+site:play.google.com/store/apps/details strategy mobile game early access
+site:play.google.com/store/apps/details 4X strategy android
+site:apps.apple.com strategy game soft launch
+```
+
+Use store results to enrich entries and to discover exact game names that can be searched back on YouTube.
 
 ### Fallback 1: WebSearch (cross-reference)
 
@@ -147,7 +188,9 @@ RSS feeds don't include video duration. For candidate videos that pass the genre
 
 - Sort channels by weight descending, process in batches of 5
 - Seed channels (weight 9-10) always in first batch
+- Process all channels with weight >= 3 every daily run. Skip weight 1-2 unless time/budget remains or the channel is newly discovered and needs validation.
 - No pacing needed between RSS requests (no rate limiting)
+- If WebSearch is used heavily, cap expansion queries first, then cross-ref only the strongest candidates to avoid spending the budget on weak leads.
 - If RSS returns empty/errors for a channel: skip it, no health penalty
 - Update `relevant_videos_7d` for each channel after scanning
 
@@ -275,11 +318,11 @@ Don't fabricate content. A quiet day is honest data — the 7-day summary is der
 
 ## What counts
 
-Include: CBT/soft launch/early access/just launched, actual gameplay footage, survival-strategy hybrids, RTS-strategy hybrids, core mechanics (base building, map, alliance, resource mgmt, PvP). Size > 500MB = more likely real game in your genre.
+Include: CBT/soft launch/early access/just launched, actual gameplay footage, survival-strategy hybrids, RTS-strategy hybrids, 4X, SLG, war/empire/kingdom/civilization builders, base building, map, alliance, resource mgmt, troops, PvP. Size > 500MB = more likely real game in your genre.
 
 Exclude: established titles unless major update, pure RPG/survival without strategy layer, PC-only, trailers without gameplay.
 
-**Duration filter: only include videos ≥ 10 minutes.** Gameplay videos under 10 min are usually trailers, clips, or shorts — not real gameplay deep-dives. When scanning, check duration and skip anything shorter.
+**Duration filter:** prefer videos >= 10 minutes. Do not automatically discard 6-10 minute videos when they are first-look, CBT, early-access, soft-launch, or cross-channel signals. Skip shorts and thin clips.
 
 ## IM Push
 
@@ -309,9 +352,11 @@ FEISHU_USER_OPEN_ID=your_open_id
 
 Use CronCreate to auto-run daily:
 
-- Time: 11:03 local time (off-minute to avoid load spikes)
-- Prompt: run the game-scan-youtube skill
-- CronCreate: `"3 11 * * *"`
+- Time: 11:00 local time
+- Prompt: run the game-scan-youtube skill with RSS scan + expansion search + Feishu push
+- CronCreate: `"0 11 * * *"`
+
+Reliability fallback: install `scripts/run_daily_once.sh` in system cron at 11:10. The wrapper skips when the day's report already exists, so it can safely backstop the Claude scheduled task without duplicate Feishu pushes.
 
 ## Key Principles
 
