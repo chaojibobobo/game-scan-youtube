@@ -138,6 +138,22 @@ Each RSS feed returns the latest 15 videos as XML with:
 
 **Adding a new channel:** When a new channel is added to channels.json, find its `channel_id` by reading `https://m.youtube.com/@handle` and extracting the UC... ID from page source (`grep -oP 'channel_id=UC[^"&]+'`).
 
+### Channel Floor Rule
+
+If total channels (seed + discovered) < 50, channel expansion is **mandatory** before the daily scan proceeds:
+
+1. Count current channels in `channels.json`
+2. If below 50, run dedicated channel discovery using:
+   - User-provided channel names/handles/URLs
+   - Cross-ref searches on games already in `seen_games.json`
+   - Genre-specific YouTube channel searches (SLG, RTS, 4X, survival strategy)
+   - Top-list / compilation video creator extraction
+3. Each expansion must add **at least 10 new channels** with verified `channel_id` (RSS-accessible)
+4. New channels start at weight 2-3 in `discovered_channels`
+5. Re-count after expansion — repeat until ≥ 50 channels or all discovery avenues exhausted
+
+This ensures the monitoring net stays wide. A thin channel list is the #1 cause of missed new games.
+
 ### Expansion Search: recent YouTube discovery
 
 After RSS scanning, run targeted WebSearch queries to catch games from channels not yet in `channels.json`. Use date terms for today/yesterday when useful.
@@ -188,7 +204,11 @@ RSS feeds don't include video duration. For candidate videos that pass the genre
 
 - Sort channels by weight descending, process in batches of 5
 - Seed channels (weight 9-10) always in first batch
-- Process all channels with weight >= 3 every daily run. Skip weight 1-2 unless time/budget remains or the channel is newly discovered and needs validation.
+- Normal day: process all channels with weight >= 3. Skip weight 1-2 unless time/budget remains or the channel is newly discovered and needs validation. Skip weight 0 (bench).
+- **Quiet Day full-channel scan (two triggers):**
+  1. **Same-day re-scan:** if today's normal scan (weight ≥ 3) produces zero new games (Quiet Day), immediately run a second pass over **all channels including weight 1-2 and weight 0 (bench)**. This catches anything the normal scan missed.
+  2. **Next-day pre-scan:** if the previous day was a Quiet Day, today's initial scan already covers **all channels** (weight 0-10) instead of just weight ≥ 3. No second pass needed unless today also turns out quiet.
+  - In both cases, merge results from both passes into a single report. Do not produce two reports.
 - No pacing needed between RSS requests (no rate limiting)
 - If WebSearch is used heavily, cap expansion queries first, then cross-ref only the strongest candidates to avoid spending the budget on weak leads.
 - If RSS returns empty/errors for a channel: skip it, no health penalty
