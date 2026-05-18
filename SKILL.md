@@ -138,21 +138,21 @@ Each RSS feed returns the latest 15 videos as XML with:
 
 **Adding a new channel:** When a new channel is added to channels.json, find its `channel_id` by reading `https://m.youtube.com/@handle` and extracting the UC... ID from page source (`grep -oP 'channel_id=UC[^"&]+'`).
 
-### Channel Floor Rule
+### Channel Growth Rule
 
-If total channels (seed + discovered) < 50, channel expansion is **mandatory** before the daily scan proceeds:
+After the daily scan completes, optionally supplement the channel list:
 
 1. Count current channels in `channels.json`
-2. If below 50, run dedicated channel discovery using:
+2. If below 50, attempt to add up to **5-10 new high-quality candidate channels** using:
    - User-provided channel names/handles/URLs
-   - Cross-ref searches on games already in `seen_games.json`
+   - Cross-ref searches on games found during today's scan
    - Genre-specific YouTube channel searches (SLG, RTS, 4X, survival strategy)
    - Top-list / compilation video creator extraction
-3. Each expansion must add **at least 10 new channels** with verified `channel_id` (RSS-accessible)
+3. Each new channel must have a **verified `channel_id`** with working RSS feed
 4. New channels start at weight 2-3 in `discovered_channels`
-5. Re-count after expansion — repeat until ≥ 50 channels or all discovery avenues exhausted
+5. **Non-blocking:** channel expansion failure must never prevent the daily report or Feishu push. If discovery queries fail (rate limit, timeout), skip expansion and proceed normally.
 
-This ensures the monitoring net stays wide. A thin channel list is the #1 cause of missed new games.
+Channel growth is opportunistic, not a gate. The daily scan always runs regardless of channel count.
 
 ### Expansion Search: recent YouTube discovery
 

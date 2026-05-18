@@ -4,6 +4,10 @@
 !SKILL.md
 logs/
 .run-stamps/
+.run-locks/
+
+# macOS
+.DS_Store
 
 # State files
 channels.json

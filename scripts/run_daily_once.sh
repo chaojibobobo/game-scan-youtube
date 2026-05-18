@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # run_daily_once.sh - cron-safe daily wrapper for game-scan-youtube
+# Uses done stamps for completion (not just report file existence).
+# Includes concurrency protection via mkdir-based lock.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -8,14 +10,35 @@ DATE="$(date +%Y-%m-%d)"
 REPORT="$PROJECT_DIR/$DATE.md"
 STAMP_DIR="$PROJECT_DIR/.run-stamps"
 STAMP="$STAMP_DIR/$DATE.done"
+LOCK_DIR="$PROJECT_DIR/.run-locks"
+LOCK="$LOCK_DIR/$DATE.lock"
 LOG_DIR="$PROJECT_DIR/logs"
 
-mkdir -p "$STAMP_DIR" "$LOG_DIR"
+mkdir -p "$STAMP_DIR" "$LOCK_DIR" "$LOG_DIR"
 
-if [[ -f "$STAMP" || -s "$REPORT" ]]; then
-  echo "[$(date +%Y-%m-%dT%H:%M:%S)] daily scan already completed for $DATE; skipping"
+# --- Concurrency protection (atomic mkdir) ---
+if ! mkdir "$LOCK" 2>/dev/null; then
+  echo "[$(date +%Y-%m-%dT%H:%M:%S)] another scan is running for $DATE (lock exists); exiting"
+  exit 0
+fi
+# Ensure lock cleanup on exit (success or failure)
+trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
+
+# --- Done stamp check (only reliable completion signal) ---
+if [[ -f "$STAMP" ]]; then
+  echo "[$(date +%Y-%m-%dT%H:%M:%S)] daily scan already completed for $DATE (done stamp exists); skipping"
   exit 0
 fi
 
+# --- Run the scan ---
 "$SCRIPT_DIR/run_scan.sh" --date "$DATE"
+SCAN_EXIT=$?
+
+if [[ $SCAN_EXIT -ne 0 ]]; then
+  echo "[$(date +%Y-%m-%dT%H:%M:%S)] scan failed (exit=$SCAN_EXIT); not writing done stamp"
+  exit $SCAN_EXIT
+fi
+
+# --- Write done stamp only after successful scan (which includes Feishu push) ---
 touch "$STAMP"
+echo "[$(date +%Y-%m-%dT%H:%M:%S)] daily scan completed for $DATE"
