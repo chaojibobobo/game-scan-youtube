@@ -60,10 +60,6 @@ def parse_report(report_path: Path) -> dict:
     text = report_path.read_text()
     result = {"is_quiet": False, "games": []}
 
-    if "## Quiet Day" in text:
-        result["is_quiet"] = True
-        return result
-
     # Match new game sections: ### HH:MM upload | Game Name — hook
     game_blocks = re.split(r"\n### ", text)
     for block in game_blocks[1:]:  # skip content before first ###
@@ -132,6 +128,11 @@ def parse_report(report_path: Path) -> dict:
 
         if game["videos"] or game["name"]:
             result["games"].append(game)
+
+    # Only mark as quiet if no games were parsed AND report contains Quiet Day header.
+    # Reports can have both "## Quiet Day" and game updates (e.g. known-game new videos).
+    if not result["games"] and "## Quiet Day" in text:
+        result["is_quiet"] = True
 
     return result
 

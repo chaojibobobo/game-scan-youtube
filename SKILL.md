@@ -111,7 +111,7 @@ Only look for videos uploaded **today or yesterday** for the daily report. Use a
 
 Daily coverage goal: maximize useful recall first, then rank by relevance. Missing a new mobile strategy game is worse than listing a borderline candidate with a clear note.
 
-Before doing network work, check whether `~/studio/_shared/game-scan-youtube/YYYY-MM-DD.md` already exists and is non-empty for the requested date. If it exists and the user did not explicitly ask to rerun, do not push again; summarize that the daily report already exists.
+Before doing network work, check whether `~/studio/_shared/game-scan-youtube/YYYY-MM-DD.md` already exists and is non-empty for the requested date. If it exists and the user did not explicitly ask to rerun, summarize that the daily report already exists — but still ensure the Feishu push has been attempted (the cron fallback handles push retries via `--force-push`).
 
 ### Primary: YouTube RSS feeds
 
@@ -234,11 +234,12 @@ If a cross-ref search reveals a new channel covering multiple games in your targ
 
 | Weight | Meaning | Scan frequency |
 |--------|---------|---------------|
-| 9-10 | Seed channels (user-confirmed) | Every run |
+| 9-10 | Seed channels (user-confirmed) | Every run, first batch |
 | 7-8 | High-quality, frequent content | Every run |
 | 5-6 | Regular content | Every run |
 | 3-4 | Occasional | Every run (light) |
-| 1-2 | Needs validation | Skip unless time allows |
+| 1-2 | Needs validation | Quiet days + full audits only |
+| 0 | Bench/substitute | Quiet days + full audits only |
 
 Weight adjustments per run:
 - Channel has ≥1 new relevant video this run → weight +1 (max 8)

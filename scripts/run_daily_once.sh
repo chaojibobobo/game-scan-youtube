@@ -21,7 +21,6 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   echo "[$(date +%Y-%m-%dT%H:%M:%S)] another scan is running for $DATE (lock exists); exiting"
   exit 0
 fi
-# Ensure lock cleanup on exit (success or failure)
 trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
 
 # --- Done stamp check (only reliable completion signal) ---
@@ -30,7 +29,22 @@ if [[ -f "$STAMP" ]]; then
   exit 0
 fi
 
-# --- Run the scan ---
+# --- Report exists but no stamp = scan ran but push may have failed ---
+if [[ -s "$REPORT" ]]; then
+  echo "[$(date +%Y-%m-%dT%H:%M:%S)] report exists for $DATE but no done stamp — retrying push only"
+  "$SCRIPT_DIR/run_scan.sh" --date "$DATE" --force-push
+  PUSH_EXIT=$?
+  if [[ $PUSH_EXIT -eq 0 ]]; then
+    touch "$STAMP"
+    echo "[$(date +%Y-%m-%dT%H:%M:%S)] push retry succeeded for $DATE"
+  else
+    echo "[$(date +%Y-%m-%dT%H:%M:%S)] push retry failed (exit=$PUSH_EXIT); not writing done stamp"
+  fi
+  exit $PUSH_EXIT
+fi
+
+# --- No report and no stamp — run full scan ---
+cd "$PROJECT_DIR"
 "$SCRIPT_DIR/run_scan.sh" --date "$DATE"
 SCAN_EXIT=$?
 
