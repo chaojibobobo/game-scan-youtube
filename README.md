@@ -5,14 +5,18 @@ Daily YouTube monitor for new mobile game gameplay videos. Scans weighted channe
 ## What it does
 
 - **RSS-first scanning** — Fetches YouTube RSS feeds (`/feeds/videos.xml?channel_id=...`) for structured video data with precise timestamps, zero rate limiting
+- **50+ channels** — Weighted channel list (seed + discovered + bench), expandable via opportunistic growth
 - **Batch processing** — Sorts channels by weight, processes 5 per batch, skips on errors with no health penalty
 - **Deduplication** — Tracks all seen games and videos in JSON files, never reports the same content twice
 - **Cross-reference** — When a new game appears, searches YouTube and Google Play for coverage metrics
 - **Channel discovery** — Automatically finds and evaluates new channels during each scan
+- **Channel growth** — Opportunistically adds 5-10 verified channels when below 50; never blocks the daily scan
 - **Channel health** — Tracks `relevant_videos_7d` per channel, auto-promotes/demotes based on activity
+- **Quiet day full scan** — If a normal scan finds nothing, re-scans all channels (including bench) as a safety net; next day also starts with full coverage
 - **IM push** — Sends a rich text report to Feishu/Lark with game info, gameplay description, download links, and video links
 - **Update tracking** — Distinguishes new game discoveries (▶) from new videos for known games (↻)
 - **Quiet day fallback** — When no new videos are found, delivers a 7-day retrospective summary instead
+- **Concurrency-safe** — `run_daily_once.sh` uses atomic mkdir locks and done stamps to prevent duplicate runs
 
 ## Setup
 
@@ -99,9 +103,14 @@ Flags: `--date`, `--dir`, `--env`, `--budget` (default 1.0 USD), `--dry-run`
 
 ### Scheduling
 
-**macOS crontab:**
+**Cron-safe wrapper** — `run_daily_once.sh` provides idempotent execution:
+- Uses `.run-stamps/YYYY-MM-DD.done` to track completed scans (not just report file existence)
+- Atomic `mkdir`-based lock in `.run-locks/` prevents concurrent runs from Claude + cron
+- Automatically cleans up lock on exit (success or failure)
+
 ```cron
-3 11 * * * /path/to/game-scan-youtube/scripts/run_scan.sh >> /tmp/game-scan.log 2>&1
+# Claude scheduled task at 11:00 + cron fallback at 11:10
+10 11 * * * /path/to/game-scan-youtube/scripts/run_daily_once.sh >> /tmp/game-scan.log 2>&1
 ```
 
 **GitHub Actions** (`.github/workflows/game-scan.yml`):
@@ -139,11 +148,12 @@ The script auto-reads the day's markdown report and `seen_games.json` — no man
 
 | Weight | Meaning | Scan frequency |
 |--------|---------|---------------|
-| 9-10 | Seed channels (user-confirmed) | Every run |
+| 9-10 | Seed channels (user-confirmed) | Every run, first batch |
 | 7-8 | High-quality, frequent content | Every run |
 | 5-6 | Regular content | Every run |
-| 3-4 | Occasional content | Light scan |
-| 1-2 | Needs validation | Skip |
+| 3-4 | Occasional content | Every run (light) |
+| 1-2 | Needs validation | Quiet days + full audits only |
+| 0 | Bench/substitute | Quiet days + full audits only |
 
 Channel health (based on `relevant_videos_7d`, updated each run):
 - `relevant_videos_7d` ≥ 5 → healthy, maintain weight
