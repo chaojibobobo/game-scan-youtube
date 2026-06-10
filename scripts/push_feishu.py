@@ -70,7 +70,11 @@ def parse_report(report_path: Path) -> dict:
         header = lines[0]
         # New game: "HH:MM upload | Game Name — hook" or "2026-05-12 | Game Name — hook"
         # Known game update: "Game Name — new video"
+        # Format 1: "HH:MM | Game Name — hook" (with pipe)
+        # Format 2: "Game Name — hook" (no pipe, no time prefix)
         new_game_match = re.match(r".*\|\s*(.+?)\s*—\s*(.+)", header)
+        if not new_game_match:
+            new_game_match = re.match(r"(.+?)\s*—\s*(.+)", header)
         if new_game_match:
             game_name = new_game_match.group(1).strip()
             hook = new_game_match.group(2).strip()
