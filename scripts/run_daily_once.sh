@@ -5,14 +5,34 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+WORK_DIR="${GAME_SCAN_WORK_DIR:-/Users/bobo/Codexspace/tools/game-scan-youtube}"
 DATE="$(date +%Y-%m-%d)"
-REPORT="$PROJECT_DIR/$DATE.md"
-STAMP_DIR="$PROJECT_DIR/.run-stamps"
+RUNNER="${GAME_SCAN_RUNNER:-$SCRIPT_DIR/run_scan.sh}"
+VALIDATOR="${GAME_SCAN_VALIDATOR:-$SCRIPT_DIR/validate_run.py}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --date) DATE="$2"; shift 2 ;;
+    --dir)  WORK_DIR="$2"; shift 2 ;;
+    -h|--help)
+      echo "Usage: $0 [--date YYYY-MM-DD] [--dir PATH]"
+      exit 0
+      ;;
+    *)
+      echo "Unknown arg: $1"
+      exit 1
+      ;;
+  esac
+done
+
+"$SCRIPT_DIR/init_workspace.sh" --dir "$WORK_DIR"
+
+REPORT="$WORK_DIR/$DATE.md"
+STAMP_DIR="$WORK_DIR/.run-stamps"
 STAMP="$STAMP_DIR/$DATE.done"
-LOCK_DIR="$PROJECT_DIR/.run-locks"
+LOCK_DIR="$WORK_DIR/.run-locks"
 LOCK="$LOCK_DIR/$DATE.lock"
-LOG_DIR="$PROJECT_DIR/logs"
+LOG_DIR="$WORK_DIR/logs"
 
 mkdir -p "$STAMP_DIR" "$LOCK_DIR" "$LOG_DIR"
 
@@ -32,9 +52,15 @@ fi
 # --- Report exists but no stamp = scan ran but push may have failed ---
 if [[ -s "$REPORT" ]]; then
   echo "[$(date +%Y-%m-%dT%H:%M:%S)] report exists for $DATE but no done stamp — retrying push only"
-  "$SCRIPT_DIR/run_scan.sh" --date "$DATE" --force-push
+  set +e
+  "$RUNNER" --date "$DATE" --dir "$WORK_DIR" --force-push
   PUSH_EXIT=$?
-  if [[ $PUSH_EXIT -eq 0 ]]; then
+  set -e
+  VALIDATE_ARGS=(--date "$DATE" --dir "$WORK_DIR" --require-push-receipt)
+  if [[ -s "$WORK_DIR/candidate-ledger-$DATE.json" ]]; then
+    VALIDATE_ARGS+=(--require-intelligence-ledger)
+  fi
+  if [[ $PUSH_EXIT -eq 0 ]] && python3 "$VALIDATOR" "${VALIDATE_ARGS[@]}"; then
     touch "$STAMP"
     echo "[$(date +%Y-%m-%dT%H:%M:%S)] push retry succeeded for $DATE"
   else
@@ -44,15 +70,23 @@ if [[ -s "$REPORT" ]]; then
 fi
 
 # --- No report and no stamp — run full scan ---
-cd "$PROJECT_DIR"
-"$SCRIPT_DIR/run_scan.sh" --date "$DATE"
+cd "$WORK_DIR"
+set +e
+"$RUNNER" --date "$DATE" --dir "$WORK_DIR"
 SCAN_EXIT=$?
+set -e
 
 if [[ $SCAN_EXIT -ne 0 ]]; then
   echo "[$(date +%Y-%m-%dT%H:%M:%S)] scan failed (exit=$SCAN_EXIT); not writing done stamp"
   exit $SCAN_EXIT
 fi
 
-# --- Write done stamp only after successful scan (which includes Feishu push) ---
+# --- Exit 0 is not completion: require a parseable report and a Feishu receipt. ---
+if ! python3 "$VALIDATOR" --date "$DATE" --dir "$WORK_DIR" --require-intelligence-ledger --require-push-receipt; then
+  echo "[$(date +%Y-%m-%dT%H:%M:%S)] completion evidence missing or invalid; not writing done stamp"
+  exit 1
+fi
+
+# --- Write done stamp only after machine-verifiable completion. ---
 touch "$STAMP"
 echo "[$(date +%Y-%m-%dT%H:%M:%S)] daily scan completed for $DATE"

@@ -1,17 +1,29 @@
-# Runtime data
-*.md
-!README.md
-!SKILL.md
+# Runtime data generated in the repository root
+/*.md
+!/README.md
+!/SKILL.md
 logs/
 .run-stamps/
 .run-locks/
+receipts/
+scan-input-*.json
+product-radar-input-*.json
+candidate-ledger-*.json
 
 # macOS
 .DS_Store
 
 # State files
-channels.json
-seen_games.json
+/channels.json
+/seen_games.json
+/candidate_history.json
+/product_radar.json
+/scan_state.json
 
 # OMC state
 .omc/
+.env
+
+# Local-private historical source material
+references/history/investigations/
+references/history/operations/

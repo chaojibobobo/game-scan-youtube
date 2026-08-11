@@ -1,184 +1,228 @@
 # Game Scan YouTube
 
-Daily YouTube monitor for new mobile game gameplay videos. Scans weighted channels via RSS feeds every 24 hours, deduplicates against a persistent game library, and pushes a structured report to Feishu/Lark.
+面向移动 4X SLG 早期情报的双雷达 skill：动态频道池负责发现一手 YouTube 实机，独立产品雷达负责监测马来西亚、印度尼西亚、菲律宾、英国、泰国、加拿大的早期测试上架。两路信号汇合后经过结构化 `4X-SLG-STRICT-v1` 门禁，再生成报告并推送飞书。
 
-## What it does
+频道权重只评价严格4X命中、领先发现、独有发现和视频证据质量；目标国家覆盖不影响频道权重。RSS/频道页可用性单独记录为 `source_health`。
 
-- **RSS-first scanning** — Fetches YouTube RSS feeds (`/feeds/videos.xml?channel_id=...`) for structured video data with precise timestamps, zero rate limiting
-- **50+ channels** — Weighted channel list (seed + discovered + bench), expandable via opportunistic growth
-- **Batch processing** — Sorts channels by weight, processes 5 per batch, skips on errors with no health penalty
-- **Deduplication** — Tracks all seen games and videos in JSON files, never reports the same content twice
-- **Cross-reference** — When a new game appears, searches YouTube and Google Play for coverage metrics
-- **Channel discovery** — Automatically finds and evaluates new channels during each scan
-- **Channel growth** — Opportunistically adds 5-10 verified channels when below 50; never blocks the daily scan
-- **Channel health** — Tracks `relevant_videos_7d` per channel, auto-promotes/demotes based on activity
-- **Quiet day full scan** — If a normal scan finds nothing, re-scans all channels (including bench) as a safety net; next day also starts with full coverage
-- **IM push** — Sends a rich text report to Feishu/Lark with game info, gameplay description, download links, and video links
-- **Update tracking** — Distinguishes new game discoveries (▶) from new videos for known games (↻)
-- **Quiet day fallback** — When no new videos are found, delivers a 7-day retrospective summary instead
-- **Concurrency-safe** — `run_daily_once.sh` uses atomic mkdir locks and done stamps to prevent duplicate runs
+本目录从 Claude Code 真源迁入，已适配 Codex；核心筛选逻辑、历史报告和持续状态均保留。
 
-## Setup
+## 目录
 
-### 1. Install as a Claude Code skill
+```text
+game-scan-youtube/
+├── SKILL.md
+├── README.md
+├── agents/openai.yaml
+├── scripts/
+│   ├── init_workspace.sh
+│   ├── collect_rss.py
+│   ├── prepare_product_radar.py
+│   ├── intelligence_state.py
+│   ├── validate_run.py
+│   ├── commit_state.py
+│   ├── run_scan.sh
+│   ├── run_daily_once.sh
+│   ├── decision_card.py
+│   └── push_feishu.py
+├── assets/bootstrap/
+│   ├── channels.json
+│   ├── seen_games.json
+│   ├── candidate_history.json
+│   ├── product_radar.json
+│   └── scan_state.json
+├── tests/
+├── docs/
+└── references/history/
+    ├── README.md
+    └── reports/
+```
 
-Copy the `SKILL.md` and `scripts/` into your skill directory:
+新运行会产生：
+
+- `scan-input-YYYY-MM-DD.json`：游标感知的 RSS + 频道页降级证据。
+- `product-radar-input-YYYY-MM-DD.json`：六国独立搜索任务。
+- `candidate-ledger-YYYY-MM-DD.json`：Core / Pending / Reject / Product Lead 的结构化判断账本。
+- `candidate_history.json`：含 Reject 在内的长期判断记忆。
+- `product_radar.json`：六国 checked / failed / not-run 覆盖、去重后的产品观察与 YouTube 转换指标。
+- `scan_state.json`：仅成功提交后推进的扫描游标。
+
+## 安装
+
+克隆本仓库，并把仓库根目录作为 skill 安装入口：
 
 ```bash
-mkdir -p ~/.claude/skills/game-scan-youtube/scripts
-cp SKILL.md ~/.claude/skills/game-scan-youtube/
-cp scripts/push_feishu.py ~/.claude/skills/game-scan-youtube/scripts/
+git clone https://github.com/chaojibobobo/game-scan-youtube.git
+ln -sfn /absolute/path/to/game-scan-youtube ~/.codex/skills/game-scan-youtube
 ```
 
-### 2. Configure Feishu credentials
-
-Create a `.env` file (default location: `~/.game-scan-youtube/.env`):
-
-```
-FEISHU_APP_ID=your_app_id
-FEISHU_APP_SECRET=your_app_secret
-FEISHU_USER_OPEN_ID=your_open_id
-```
-
-Get these from [Feishu Open Platform](https://open.feishu.cn/app) → your app → Credentials.
-
-### 3. Initialize state files
-
-Create a working directory with two JSON files:
-
-**channels.json** — Your seed channels:
-
-```json
-{
-  "last_updated": "2026-01-01",
-  "seed_channels": [
-    {
-      "id": "@channel-handle",
-      "channel_id": "UCxxxxxxxxxxxxxxxxxxxxxx",
-      "name": "Channel Name",
-      "url": "https://www.youtube.com/@channel-handle",
-      "title_pattern": "Game Name Gameplay Mobile Android",
-      "weight": 10,
-      "tags": ["strategy", "SLG"],
-      "note": "why this channel matters",
-      "relevant_videos_7d": 0
-    }
-  ],
-  "discovered_channels": []
-}
-```
-
-Find `channel_id` via: `curl -s "https://m.youtube.com/@handle" | grep -oP 'channel_id=UC[^"&]+'`
-
-**seen_games.json** — Start empty:
-
-```json
-{
-  "last_updated": "2026-01-01",
-  "games": {}
-}
-```
-
-### 4. Run
-
-**Interactive** — Tell Claude: "run game-scan-youtube" or "check for new game videos" — the skill triggers automatically on relevant prompts.
-
-**Automated** — Use `run_scan.sh` for non-interactive execution (system cron, CI/CD, etc.):
+Claude Code 可使用同一源码：
 
 ```bash
-# Basic (today's date)
-./scripts/run_scan.sh
-
-# Specify date
-./scripts/run_scan.sh --date 2026-05-14
-
-# Dry run (skip Feishu push)
-./scripts/run_scan.sh --dry-run
-
-# Custom work directory and budget cap
-./scripts/run_scan.sh --dir ~/my-scout --budget 0.5
+ln -sfn /absolute/path/to/game-scan-youtube ~/.claude/skills/game-scan-youtube
 ```
 
-Flags: `--date`, `--dir`, `--env`, `--budget` (default 1.0 USD), `--dry-run`
+安装后在新的 Codex / Claude Code 会话中即可发现此 skill。
 
-### Scheduling
+## 初始化持续工作区
 
-**Cron-safe wrapper** — `run_daily_once.sh` provides idempotent execution:
-- Uses `.run-stamps/YYYY-MM-DD.done` to track completed scans (not just report file existence)
-- Atomic `mkdir`-based lock in `.run-locks/` prevents concurrent runs from Claude + cron
-- Automatically cleans up lock on exit (success or failure)
-
-```cron
-# Claude scheduled task at 11:00 + cron fallback at 11:10
-10 11 * * * /path/to/game-scan-youtube/scripts/run_daily_once.sh >> /tmp/game-scan.log 2>&1
-```
-
-**GitHub Actions** (`.github/workflows/game-scan.yml`):
-```yaml
-name: Game Scan
-on:
-  schedule:
-    - cron: '3 3 * * *'  # 11:03 CST
-jobs:
-  scan:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: anthropics/claude-code-action@v1
-      - run: ./scripts/run_scan.sh
-        env:
-          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
-          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-          FEISHU_USER_OPEN_ID: ${{ secrets.FEISHU_USER_OPEN_ID }}
-```
-
-## Push script
+skill 源码和历史证据保持只读；新的报告、去重状态和运行锁写入独立工作区：
 
 ```bash
-# Normal push
-python3 scripts/push_feishu.py --date YYYY-MM-DD --dir ~/studio/_shared/game-scan-youtube
-
-# Dry run (print to stdout, don't send)
-python3 scripts/push_feishu.py --date YYYY-MM-DD --dir ~/studio/_shared/game-scan-youtube --dry-run
+scripts/init_workspace.sh
 ```
 
-The script auto-reads the day's markdown report and `seen_games.json` — no manual data entry needed.
+默认位置：
 
-## Weight system
+```text
+/Users/bobo/Codexspace/tools/game-scan-youtube
+```
 
-| Weight | Meaning | Scan frequency |
-|--------|---------|---------------|
-| 9-10 | Seed channels (user-confirmed) | Every run, first batch |
-| 7-8 | High-quality, frequent content | Every run |
-| 5-6 | Regular content | Every run |
-| 3-4 | Occasional content | Every run (light) |
-| 1-2 | Needs validation | Quiet days + full audits only |
-| 0 | Bench/substitute | Quiet days + full audits only |
+指定其他位置：
 
-Channel health (based on `relevant_videos_7d`, updated each run):
-- `relevant_videos_7d` ≥ 5 → healthy, maintain weight
-- `relevant_videos_7d` 1-4 → watching
-- `relevant_videos_7d` = 0 AND weight > 5 → demote -1 (min 1), flag for user review
+```bash
+scripts/init_workspace.sh --dir /path/to/workspace
+```
 
-Channels skipped due to errors do NOT affect health calculations.
+也可以设置：
 
-## Report format
+```bash
+export GAME_SCAN_WORK_DIR=/path/to/workspace
+```
 
-Each game entry includes:
+初始化只补缺失文件，不覆盖已有报告或状态。
 
-- Game name, developer, status (Early Access / CBT / Soft Launch)
-- Gameplay description
-- Download link (Google Play / App Store)
-- Store signal (downloads, rating, last update)
-- Video links sorted by upload date, newest first
-- Cross-reference count (how many channels covered it)
+## 使用
 
-Known game updates are shown with ↻ prefix, new discoveries with ▶.
+交互使用时，可以直接告诉 Codex：
 
-Quiet days include a 7-day retrospective with hot games table and trend themes.
+```text
+运行 game-scan-youtube，扫描今天的新移动 4X SLG 视频与六国新品信号。
+```
 
-## Requirements
+交互式手动扫描由当前 Codex 直接按 skill 阶段执行，不再启动嵌套的 `codex exec`。只有明确需要非交互 runner 时才使用下面脚本；它会先在父进程采集 RSS，再让独立 agent 分析本地证据：
 
-- Claude Code CLI
-- Feishu/Lark app with IM permissions
-- Python 3.9+ with `requests`
+```bash
+scripts/run_scan.sh --dry-run
+```
+
+指定日期和工作区：
+
+```bash
+scripts/run_scan.sh \
+  --date 2026-07-25 \
+  --dir /path/to/workspace \
+  --dry-run
+```
+
+默认调用 Codex CLI。若仍需用 Claude Code 执行同一 skill：
+
+```bash
+scripts/run_scan.sh --agent claude --budget 1.0
+```
+
+## 飞书推送
+
+凭据只放在环境变量或 `~/.game-scan-youtube/.env`，不要进入仓库：
+
+```text
+FEISHU_APP_ID=...
+FEISHU_APP_SECRET=...
+FEISHU_USER_OPEN_ID=...
+```
+
+先对历史报告做本地解析和渲染预检：
+
+```bash
+python3 scripts/push_feishu.py \
+  --date 2026-06-16 \
+  --dir /Users/bobo/Codexspace/tools/game-scan-youtube \
+  --dry-run
+```
+
+真实推送：
+
+```bash
+python3 scripts/push_feishu.py \
+  --date YYYY-MM-DD \
+  --dir /Users/bobo/Codexspace/tools/game-scan-youtube
+```
+
+飞书输出默认采用 Decision Card v3：
+
+```text
+价值结论
+→ 必看（默认 1 款，最多 2 款）
+→ 为什么看（1 条最强证据）
+→ 核心机制（最多 3 个节点）
+→ 补充（每款 1 行，并带独立 YouTube 原视频链接）
+→ 趋势一句话
+→ 观察与更新（数量优先）
+```
+
+聊天卡片正常正文控制在约 500 个中文字符、15 行以内。标题直接回答“今天值不值得看”，并用颜色与标签强化必看、补充和观察数量。本地 Markdown 继续保留完整证据。
+
+每一款确认新增游戏都必须把对应的一手 YouTube 视频链接传递到飞书：必看项目显示 `YouTube 原视频` 按钮，补充项目在同一行显示独立的 `YouTube 原视频` 链接，紧凑 post fallback 也保持相同映射。任一确认新增游戏缺少合法 YouTube 视频 URL 时，渲染会直接失败并报告游戏名，不允许静默发送无源结论，也不能只用商店链接代替视频源。
+
+报告可用 `**Priority:** Focus` 显式指定重点；否则同日 2 个以上频道覆盖会自动进入候选重点。`--dry-run` 只在本地打印卡片预览，不会发送。
+
+## 定时执行
+
+`run_daily_once.sh` 使用原子目录锁和 `.run-stamps`，防止并发扫描及重复推送：
+
+```bash
+scripts/run_daily_once.sh
+```
+
+如果要创建 Codex 自动化，应让自动化调用此脚本。不要因为旧 Claude Code 任务或 cron 曾存在，就假设当前环境仍在正常运行；需要单独回读当前自动化状态。
+
+完成戳不是由子进程退出码决定。只有以下证据全部成立才会写入：
+
+- 当日报告存在、非空且可解析。
+- `channels.json` 与 `seen_games.json` 是有效 JSON。
+- 真实飞书发送生成 `receipts/YYYY-MM-DD.feishu.json`，其中包含 `message_id`。
+
+手动排查时按以下顺序：
+
+```bash
+python3 scripts/collect_rss.py \
+  --channels /path/to/workspace/channels.json \
+  --output /path/to/workspace/scan-input-YYYY-MM-DD.json
+
+python3 scripts/validate_run.py \
+  --date YYYY-MM-DD \
+  --dir /path/to/workspace \
+  --require-intelligence-ledger
+```
+
+## 历史资产
+
+- 18 份日期报告：`2026-05-12` 至 `2026-06-16`，日期不连续。
+- 持续状态快照：`channels.json`、`seen_games.json`、`candidate_history.json`、`product_radar.json`、`scan_state.json`。
+
+详细清单和来源边界见 `references/history/README.md`。
+
+未迁入：
+
+- Claude 原始会话 JSONL。
+- `.omc` 会话状态。
+- cron 原始日志、锁和完成戳。
+- `.env` 或任何凭据。
+- 含个人工作上下文的 operations 记录。
+- 含第三方联系邮箱的开发者调查原稿。
+
+这些不是公开 skill 的必要运行资产，且可能包含私人上下文、第三方联系方式、临时输出或敏感运行信息。本地副本可以继续保留，但不进入公开远端。
+
+## 依赖
+
+- Codex CLI；可选 Claude Code CLI。
+- Python 3.9+。
+- `curl`。
+- 若要推送飞书，需要具备 IM 发消息权限的 Feishu/Lark 应用。
+
+## 已知边界
+
+- YouTube RSS、页面抓取和搜索源都可能出现 `403`、`429` 或 `5xx`；RSS 失败会自动尝试频道页，频道页相对时间不得冒充准确上传时间。
+- 六国上架判断必须来自带 `gl=国家码` / `country=国家码` 的本地化商店源；普通搜索摘要只能发现线索，不能证明区域可用。
+- 连续失败时要降级并明确报告证据缺口，不要循环重试，也不要把 cron 启动当成扫描完成。
+- `seen_games.json` 是去重真源；未确认的新视频不得写成已验证发现。
+- 嵌套 Codex/Claude 不假设具备网络；RSS 必须先落成本地 `scan-input-*.json`。
