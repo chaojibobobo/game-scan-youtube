@@ -6,6 +6,7 @@ import re
 from copy import deepcopy
 from datetime import date, timedelta
 from typing import Dict, Iterable, List, Optional
+from urllib.parse import parse_qs, urlparse
 
 
 TARGET_COUNTRIES = (
@@ -72,6 +73,20 @@ def _is_localized_store_url(value: str, country: str) -> bool:
             value or "",
             flags=re.IGNORECASE,
         )
+    )
+
+
+def _is_localized_google_play_url(value: str, country: str) -> bool:
+    try:
+        parsed = urlparse(value or "")
+        country_values = parse_qs(parsed.query).get("gl", [])
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        parsed.scheme in {"http", "https"}
+        and (parsed.hostname or "").lower() == "play.google.com"
+        and parsed.path.startswith("/store/")
+        and any(item.upper() == country.upper() for item in country_values)
     )
 
 
@@ -200,9 +215,13 @@ def validate_product_radar_run(ledger: dict) -> None:
             raise ValueError(f"source_urls must be a list for {item.get('code')}")
         if item.get("status") == "checked":
             source_urls = item.get("source_urls") or []
-            if not any(_is_localized_store_url(url, item["code"]) for url in source_urls):
+            if not any(
+                _is_localized_google_play_url(url, item["code"])
+                for url in source_urls
+            ):
                 raise ValueError(
-                    f"checked product-radar country has no localized source URL: {item.get('code')}"
+                    "checked product-radar country has no localized Google Play "
+                    f"source URL: {item.get('code')}"
                 )
         statuses.append(item.get("status"))
     if run.get("status") == "complete" and any(status != "checked" for status in statuses):

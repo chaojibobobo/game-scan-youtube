@@ -133,7 +133,7 @@ python3 scripts/prepare_product_radar.py \
   --output "$GAME_SCAN_WORK_DIR/product-radar-input-YYYY-MM-DD.json"
 ```
 
-Product Radar monitors exactly **MY / ID / PH / GB / TH / CA**: Malaysia, Indonesia, Philippines, United Kingdom, Thailand, and Canada. Open the manifest's region-qualified Google Play (`gl=COUNTRY`) and App Store (`country=COUNTRY`) endpoints first; generic web-search snippets cannot prove regional availability. For each country, record checked, failed, or not-run status and localized source URLs. Overall `complete` means all six checked, `degraded` means partial/failed coverage, and `not_run` means all six not run. Capture first listing, pre-registration to available, region expansion, removal, package/store ID, developer and observed time.
+Product Radar monitors exactly **MY / ID / PH / GB / TH / CA**: Malaysia, Indonesia, Philippines, United Kingdom, Thailand, and Canada. **Google Play is the primary regional product source.** For every country, complete the manifest's region-qualified Google Play (`gl=COUNTRY`) searches before any secondary lookup. A country may be marked `checked` only when its run evidence includes at least one localized Google Play URL. App Store / iTunes (`country=COUNTRY`) is secondary and is used only to cross-check iOS availability and release dates. If Google Play is unavailable but Apple succeeds, mark that country `failed` and the overall run `degraded`; never call it checked. Generic web-search snippets cannot prove regional availability. Capture first observation, pre-registration to available, region expansion, removal, package/store ID, developer and observed time. Because Google Play search does not expose a reliable first-listing date, distinguish “no new strict-4X signal found” from an absolute claim that no app was newly listed.
 
 Store-only results remain internal `Product Lead` entries. Reverse-search exact title, package ID and developer on YouTube. Only candidates with first-hand gameplay and a passing strict 4X gate may appear in the report. Product Radar has its own coverage and yield metrics; **target-country coverage never affects channel weight**.
 
@@ -148,6 +148,7 @@ Use both radar inputs and all persistent state files.
    - Duration check: read video page for candidates, prefer >= 10 min but keep high-signal 6-10 min first-look videos
    - On RSS error/empty recorded in the input: preserve channel state (no health penalty)
 3. Product Radar pass for MY / ID / PH / GB / TH / CA:
+   - Execute every localized Google Play primary query first; Apple is a secondary cross-check
    - Execute only searches supported by actual network evidence
    - Use exact title / package ID / developer to reverse-search YouTube
    - Store source-less candidates as Product Lead; never publish them
@@ -308,7 +309,7 @@ For each credible result:
 
 ### Product Radar: six-country launch signals
 
-Use `product-radar-input-YYYY-MM-DD.json` to monitor MY / ID / PH / GB / TH / CA separately. Start with its localized store endpoints, use the country-specific web queries only as discovery fallback, then record per-country status and source URLs in `candidate-ledger-YYYY-MM-DD.json`. Use store results to identify exact title, package ID and developer, then reverse-search those identifiers on YouTube. Store-only findings remain `Product Lead` and cannot enter the user-facing report.
+Use `product-radar-input-YYYY-MM-DD.json` to monitor MY / ID / PH / GB / TH / CA separately. Start with every localized Google Play primary endpoint, use Apple only as the release-date / iOS cross-check, and use country-specific web queries only as discovery fallback. Record per-country status and source URLs in `candidate-ledger-YYYY-MM-DD.json`; Apple-only evidence cannot produce `checked`. Use store results to identify exact title, package ID and developer, then reverse-search those identifiers on YouTube. Store-only findings remain `Product Lead` and cannot enter the user-facing report.
 
 ### Fallback 1: web search (cross-reference)
 
@@ -567,6 +568,7 @@ Do not infer that the historical schedule is still active. Verify the current au
 - **Gap-aware incremental window**: continue from the last successful committed cursor, capped at 72 hours.
 - **Channel Radar first**: dynamic weighted sources remain the primary video-discovery mechanism.
 - **Product Radar independent**: MY / ID / PH / GB / TH / CA coverage never changes channel weight.
+- **Google Play primary, Apple secondary**: six-country `checked` requires localized Google Play evidence; Apple only cross-checks iOS availability and release dates.
 - **RSS exact, page fallback approximate**: relative page time never impersonates an exact upload timestamp.
 - **Structured judgment memory**: candidate ledger and Reject history prevent repeated false positives.
 - **Batch with pacing**: 5 channels per batch. Cross-reference search may 429 — space queries out and stop repeated failed retries.

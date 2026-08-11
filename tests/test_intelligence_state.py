@@ -171,6 +171,25 @@ class ProductRadarStateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "account for exactly"):
             self.intel.validate_product_radar_run(data)
 
+    def test_apple_only_country_cannot_be_marked_checked(self):
+        data = ledger([candidate()])
+        data["product_radar_run"] = {
+            "status": "complete",
+            "countries": [
+                {
+                    "code": code,
+                    "status": "checked",
+                    "source_urls": [
+                        f"https://itunes.apple.com/search?term=4X%20strategy&country={code}&entity=software&limit=50"
+                    ],
+                }
+                for code in ("MY", "ID", "PH", "GB", "TH", "CA")
+            ],
+        }
+
+        with self.assertRaisesRegex(ValueError, "localized Google Play"):
+            self.intel.validate_product_radar_run(data)
+
     def test_product_lead_can_be_stored_without_youtube_but_not_published(self):
         lead = candidate(classification="Product Lead")
         data = ledger([lead])
